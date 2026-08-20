@@ -227,18 +227,6 @@ The model is reloaded automatically in the background whenever a new version is 
 
 ---
 
-Suggested `.gitignore` entries:
-
-```
-mlflow_data/
-postgres_data/
-airflow/logs/
-.env
-__pycache__/
-*.pyc
-```
-
----
 
 ## Exporting to Hugging Face
 
