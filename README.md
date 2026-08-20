@@ -138,7 +138,7 @@ See [Dataset](#dataset) below — download the images from the UFF DMI database 
 
 ### 3. Configure secrets
 
-Create a `.env` file in the project root (see [Configuration & secrets](#configuration--secrets)) with, at minimum:
+Create a `.env` file in the project root, with at minimum:
 
 ```
 API_KEY=<choose-a-strong-random-key>
