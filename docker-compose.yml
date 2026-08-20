@@ -1,0 +1,200 @@
+# ==========================================
+# 1. SHARED CONFIGURATION (AIRFLOW)
+# ==========================================
+x-airflow-common:
+  &airflow-common
+  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.10.2}
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    # Passes host current path to the container so DAGs can map volumes correctly
+    HOST_PROJECT_PATH: ${PWD}
+  volumes:
+    - ${AIRFLOW_PROJ_DIR:-.}/airflow/dags:/opt/airflow/dags
+    - ${AIRFLOW_PROJ_DIR:-.}/airflow/logs:/opt/airflow/logs
+    - ${AIRFLOW_PROJ_DIR:-.}/airflow/config:/opt/airflow/config
+    - ${AIRFLOW_PROJ_DIR:-.}/airflow/plugins:/opt/airflow/plugins
+    # Allow Airflow to launch other Docker containers
+    - /var/run/docker.sock:/var/run/docker.sock
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+  networks:
+    - mlops-breast-cancer-net
+
+services:
+  # ==========================================
+  # 2. INFRASTRUCTURE (DB & INIT)
+  # ==========================================
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+    networks:
+      - mlops-breast-cancer-net
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /sources/logs /sources/dags /sources/plugins
+        chown -R "${AIRFLOW_UID}:0" /sources/{logs,dags,plugins}
+        exec /entrypoint airflow version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-admin}
+    user: "0:0"
+    volumes:
+      - ${AIRFLOW_PROJ_DIR:-.}/airflow:/sources
+
+  # ==========================================
+  # 3. AIRFLOW SERVICES
+  # ==========================================
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      model-trainer-image:
+        condition: service_completed_successfully # Forces the build
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ==========================================
+  # 4. MLOPS SERVICES
+  # ==========================================
+
+  # Helper service to build the image used by Airflow DockerOperator
+  model-trainer-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.model_train_eval.cpu
+    image: uff_breast_cancer_pytorch:latest
+    volumes:
+      # Needs access to artifacts to load the model
+      - ./mlflow_data:/app/mlflow_data
+    # A dummy command so it exits immediately if accidentally started
+    command: "true"
+    networks:
+      - mlops-breast-cancer-net
+
+  # MLflow Server
+  mlflow-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    image: uff_mlflow_server:latest
+    container_name: mlflow_server
+    ports:
+      - "5000:5000"
+    volumes:
+      # Data persistence for MLflow
+      - ./mlflow_data:/mlflow_data
+    restart: always
+    networks:
+      - mlops-breast-cancer-net
+
+  # FastAPI (Inference)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api.cpu
+    container_name: inference_api
+    command: uvicorn API_main:app --host 0.0.0.0 --port 8000
+    volumes:
+      # Needs access to artifacts to load the model
+      - ./mlflow_data:/mlflow_data
+    environment:
+      - API_KEY=FpHddzetP5bGIuZUQJ7VP_Lx61JGBpoXyGM3mlFeCjs
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mlflow-server
+    networks:
+      - mlops-breast-cancer-net
+    # To enable GPU, use docker-compose.gpu.yml for override
+
+  # Gradio (UI)
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    container_name: gradio_ui
+    command: python gradio_app.py
+    environment:
+      - API_KEY=FpHddzetP5bGIuZUQJ7VP_Lx61JGBpoXyGM3mlFeCjs
+      # Points to the API container name
+      - API_URL=http://api:8000/predict_with_gradcam
+    ports:
+      - "7860:7860"
+    depends_on:
+      - api
+    networks:
+      - mlops-breast-cancer-net
+
+networks:
+  mlops-breast-cancer-net:
+    name: mlops-breast-cancer-network
+    driver: bridge

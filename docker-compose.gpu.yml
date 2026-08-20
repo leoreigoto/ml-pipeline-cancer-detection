@@ -1,0 +1,30 @@
+version: '3.8'
+# run using override on docker-compose.yml
+# docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+services:
+  # Pins the trainer to the first GPU (Index 0)
+  model-trainer-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.model_train_eval.gpu
+    image: uff_breast_cancer_pytorch_gpu:latest
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0'] # Use GPU 0 specifically
+              capabilities: [gpu]
+
+  # Pins the API to the second GPU (Index 1)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api.gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1'] # Use GPU 1 specifically
+              capabilities: [gpu]

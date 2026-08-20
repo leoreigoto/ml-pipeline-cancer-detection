@@ -1,0 +1,18 @@
+version: '3.8'
+# run using override on docker-compose.yml
+# docker compose -f docker-compose.yml -f docker-compose.single_gpu_train.yml up -d --build
+#  docker build -t uff_breast_cancer_pytorch:latest -f Dockerfile.model_train_eval.gpu .
+
+services:
+  model-trainer-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.model_train_eval.gpu
+    image: uff_breast_cancer_pytorch:latest
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

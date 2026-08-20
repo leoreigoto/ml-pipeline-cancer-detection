@@ -1,0 +1,38 @@
+1. Airflow Web Interface
+URL: http://localhost:8080
+
+Username: airflow
+
+Password: airflow
+
+What it's for: managing your data pipelines and model training triggers.
+
+2. Gradio UI (User Interface)
+URL: http://localhost:7860
+
+What it's for: Uploading images to test your breast cancer prediction model visually.
+
+3. MLflow (Model Tracking)
+URL: http://localhost:5000
+
+What it's for: Viewing experiments, metrics, and trained model artifacts.
+
+4. API (FastAPI)
+URL: http://localhost:8000
+
+FIRST RUN: docker-compose up --build 
+Use "--build" in the first run, otherwise Docker might try to fetch from public images
+
+Run everything: docker-compose up
+
+
+Stop everything: docker-compose down
+
+debug (example ui logs): docker-compose logs ui
+
+Build specific image: docker-compose up --build -d ui
+The example above re-build the gradio service (ui)
+
+Recreate specific container
+docker-compose up --build --force-recreate api
+The example above recreate the fastapi service (api)
